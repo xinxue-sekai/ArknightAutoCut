@@ -18,7 +18,7 @@ var ServiceManager = (function () {
     var cp = nodeRequire("child_process");
 
     var PORTS = [8765, 8766, 8767, 8768, 8769];
-    var EXPECTED_ENGINE_VERSION = "0.3.1"; // 不一致时关掉旧引擎重拉（防止复用旧代码/旧模板包的残留进程）
+    var EXPECTED_ENGINE_VERSION = "0.3.2"; // 不一致时关掉旧引擎重拉（防止复用旧代码/旧模板包的残留进程）
     var state = { port: null, child: null, adopted: false, hbTimer: null, ready: false };
 
     function extDir() {

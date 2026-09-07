@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import cv2
 
 SERVICE_NAME = "newcut-service"
-SERVICE_VERSION = "0.3.1"
+SERVICE_VERSION = "0.3.2"
 
 # 引擎内部按相对路径读取模板目录，必须先切到模板所在目录
 os.chdir(_HERE)
@@ -50,6 +50,25 @@ def _watchdog():
         if _HEARTBEAT["idle_exit"] > 0 and time.time() - _HEARTBEAT["last"] > _HEARTBEAT["idle_exit"]:
             print(f"[{SERVICE_NAME}] 超过 {_HEARTBEAT['idle_exit']:.0f}s 无心跳，自动退出", flush=True)
             os._exit(0)
+
+
+def _setup_logging():
+    """把 stdout/stderr 落盘到插件根目录 newcut-service.log。
+
+    pythonw + stdio:ignore 启动时没有控制台，日志（含分析报错堆栈）
+    原本会全部丢失；重定向后可在日志文件里排查面板里看不到的堆栈。
+    """
+    path = os.path.join(os.path.dirname(_HERE), "newcut-service.log")
+    try:
+        f = open(path, "a", buffering=1, encoding="utf-8", errors="replace")
+        if sys.stdout is None:
+            sys.stdout = f
+        if sys.stderr is None:
+            sys.stderr = f
+        print(f"\n[{SERVICE_NAME}] --- 启动 {time.strftime('%Y-%m-%d %H:%M:%S')} "
+              f"v{SERVICE_VERSION} ---", flush=True)
+    except OSError:
+        pass
 
 
 def _new_job(video_path: str, params: dict) -> str:
@@ -91,6 +110,7 @@ def _run_job(job_id: str, video_path: str, params: dict):
     except Exception as e:
         job["state"] = "error"
         job["error"] = f"{e}\n{traceback.format_exc()}"
+        print(f"[job {job_id}] 分析失败: {job['error']}", flush=True)
 
 
 def _get_thumb(job, sec: float, width: int = 192) -> str:
@@ -244,6 +264,8 @@ def main():
     _HEARTBEAT["idle_exit"] = float(args.idle_exit)
     if _HEARTBEAT["idle_exit"] > 0:
         threading.Thread(target=_watchdog, daemon=True).start()
+
+    _setup_logging()
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"[{SERVICE_NAME}] v{SERVICE_VERSION} listening on http://{args.host}:{args.port}", flush=True)
