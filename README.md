@@ -2,7 +2,7 @@
 
 **EN** | An open-source Adobe Premiere Pro plugin that auto-edits Arknights gameplay recordings: it detects pauses/speed segments by template matching, then **cuts, deletes dead time and marks speed-up ranges directly on the PR timeline** — no intermediate video export. GPU/CPU decode is auto-selected by real benchmarking. See [English summary](#english-summary) below.
 
-分析引擎为**完全自研**（参考开源工具 [arknight-auto-editing](https://github.com/liemark/arknight-auto-editing) 的功能规格逆向实现，不含其任何代码与资源），算法依据见 [docs/逆向实现规格.md](docs/逆向实现规格.md)。
+分析引擎为**完全自研**（参考开源工具 [arknight-auto-editing](https://github.com/liemark/arknight-auto-editing) 的功能规格逆向实现，不含其任何代码与资源）。
 
 ## 功能
 
