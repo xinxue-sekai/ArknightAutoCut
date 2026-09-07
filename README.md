@@ -25,7 +25,7 @@ newcut/
 ├─ service/newcut_service/            自研分析引擎（nc_match / nc_segment / decode / pipeline）
 ├─ service/tools/                     pack_from_video（视频校准）· build_portable（组装插件）· batch_process · calibrate
 ├─ service/tests/                     冒烟测试 + 测试夹具（截图来自 arknight-auto-editing，MIT）
-└─ docs/                              开发方案 v2 + 逆向实现规格
+└─ LICENSE / .gitignore
 ```
 
 ## 安装（Windows，PR 2020~2025）
