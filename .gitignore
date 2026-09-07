@@ -6,6 +6,9 @@ __pycache__/
 # 测试产物
 service/tests/_out/
 
+# 内部开发文档（不开源）
+docs/
+
 # 便携插件构建产物（runtime/ 内嵌 Python 与二进制不入库；
 # 由 service/tools/build_portable.py 从源码重新组装）
 cep-plugin/com.newcut.arknights/runtime/
