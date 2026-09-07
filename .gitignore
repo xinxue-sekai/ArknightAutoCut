@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# 测试产物
+service/tests/_out/
+
+# 便携插件构建产物（runtime/ 内嵌 Python 与二进制不入库；
+# 由 service/tools/build_portable.py 从源码重新组装）
+cep-plugin/com.newcut.arknights/runtime/
+cep-plugin/com.newcut.arknights/engine/template_pack/
+
+# 系统与 IDE 垃圾
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.log

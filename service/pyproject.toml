@@ -1,0 +1,13 @@
+[project]
+name = "newcut-service"
+version = "0.2.0"
+description = "NewCut: 自研帧状态分析引擎的本地 HTTP 服务（供 Premiere Pro 面板调用）"
+requires-python = ">=3.10"
+dependencies = [
+    "imageio-ffmpeg>=0.6.0",
+    "numpy",
+    "opencv-python",
+]
+
+[tool.uv]
+package = false

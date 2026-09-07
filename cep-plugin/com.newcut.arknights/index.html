@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      margin: 0; padding: 10px;
+      font-size: 12px; color: #d8d8d8; background: #2a2a2a;
+      font-family: "Segoe UI", sans-serif;
+    }
+    h1 { font-size: 14px; margin: 0 0 8px 0; color: #fff; }
+    h2 { font-size: 12px; margin: 14px 0 6px 0; color: #bbb; font-weight: 600;
+         border-top: 1px solid #444; padding-top: 10px; }
+    .row { display: flex; flex-direction: row; align-items: center; margin: 4px 0; }
+    .row .grow { flex: 1 1 auto; }
+    button {
+      padding: 5px 10px; margin: 2px 4px 2px 0; font-size: 12px;
+      background: #3d6fd6; color: #fff; border: none; border-radius: 3px;
+    }
+    button:hover { background: #4a7ce0; }
+    button:disabled { background: #555; color: #999; }
+    button.secondary { background: #555; }
+    button.secondary:hover { background: #666; }
+    .dot { width: 9px; height: 9px; border-radius: 5px; background: #c33; margin-right: 5px; }
+    .dot.ok { background: #3c3; }
+    .info { color: #aaa; word-break: break-all; line-height: 1.5; }
+    .stat { color: #eee; }
+    input[type="text"] {
+      width: 60px; padding: 3px 4px; background: #1e1e1e; color: #eee;
+      border: 1px solid #555; border-radius: 3px;
+    }
+    .param-grid { display: flex; flex-direction: row; flex-wrap: wrap; }
+    .param-grid .cell { width: 50%; margin: 2px 0; }
+    #progressWrap { background: #1e1e1e; border-radius: 3px; height: 14px; margin: 6px 0; overflow: hidden; }
+    #progressBar { height: 100%; width: 0%; background: #3d6fd6; }
+    #timeline { position: relative; height: 26px; background: #1e1e1e;
+                border: 1px solid #555; border-radius: 3px; margin: 6px 0; overflow: hidden; }
+    #timeline .seg { position: absolute; top: 0; bottom: 0; background: #3f9950; }
+    #timeline .seg.del { background: #b04040; }
+    #timeline .seg.speed { background: #d6b83d; top: 18px; bottom: 0; opacity: 0.9; }
+    #log { background: #1e1e1e; border: 1px solid #444; border-radius: 3px;
+           height: 110px; overflow-y: auto; padding: 4px 6px; font-size: 11px;
+           font-family: Consolas, monospace; color: #9c9; white-space: pre-wrap; }
+    .err { color: #f88; }
+    .hint { color: #888; font-size: 11px; line-height: 1.5; }
+    label { margin-right: 6px; }
+    .pl-item { display: flex; flex-direction: row; align-items: center; padding: 3px 4px; border-bottom: 1px solid #333; }
+    .pl-item:hover { background: #333; }
+    .pl-item img { width: 64px; height: 40px; margin-right: 8px; background: #111; cursor: pointer; }
+    .pl-item .t { flex: 1 1 auto; font-size: 11px; color: #ccc; }
+    .pl-item .d { font-size: 11px; color: #888; margin-right: 6px; }
+    .pl-item.off .t, .pl-item.off .d { text-decoration: line-through; opacity: 0.5; }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <h1 class="grow">NewCut · 明日方舟自动剪辑</h1>
+    <div id="statusDot" class="dot"></div>
+    <span id="statusText" class="info">检测服务…</span>
+  </div>
+
+  <h2>1. 素材</h2>
+  <div class="row">
+    <button id="btnPick">获取选中剪辑</button>
+    <button id="btnAnalyze" disabled>开始分析</button>
+    <button id="btnCancel" class="secondary" disabled>取消</button>
+  </div>
+  <div id="clipInfo" class="info">未选择（在时间轴选中录屏素材剪辑后点击左键）</div>
+
+  <div id="progressWrap"><div id="progressBar"></div></div>
+  <div id="progressText" class="hint">　</div>
+
+  <h2>运行日志</h2>
+  <div id="log"></div>
+
+  <h2>2. 结果（<span id="planStats" class="stat">尚未分析</span>）</h2>
+  <div id="timeline"></div>
+  <div class="hint">绿=保留　红=删除　黄条=建议倍速段　黑条=转场</div>
+
+  <div class="row" style="margin-top:6px">
+    <label><input type="checkbox" id="optMerge" checked> 碎片合并(&lt;0.3s)</label>
+    <label><input type="checkbox" id="optTrans" checked> 删除黑屏/冻结</label>
+  </div>
+
+  <h2>暂停段（<span id="pauseCount" class="stat">0</span>）勾=删 / 取消勾=留 / 点图=跳转</h2>
+  <div id="pauseList" style="max-height:180px; overflow-y:auto; border:1px solid #444; border-radius:3px;"></div>
+
+  <h2>3. 应用到 PR</h2>
+  <div class="row">
+    <label><input type="checkbox" id="optMarkers" checked> 倍速段打标记</label>
+  </div>
+  <div class="row">
+    <button id="btnApply" disabled>应用到新序列</button>
+    <button id="btnApplyInPlace" class="secondary" disabled>应用到原序列</button>
+  </div>
+  <div class="hint">
+    <b>新序列</b>（推荐）：新建「&lt;序列名&gt;_newcut」重建精剪结果，原序列不动，一步撤销。
+    <b>原序列</b>：直接把当前序列 V1 替换成精剪结果（声画同步裁剪，Ctrl+Z 可逐步撤销）。
+    完成后倍速段位置会有命名标记（如 2x）：选中该段，右键 → 速度/持续时间，输入 200% 即可。
+  </div>
+
+  <details style="margin-top:14px; border-top:1px solid #444; padding-top:8px;">
+    <summary style="cursor:pointer; font-size:12px; color:#bbb; font-weight:600;">高级功能（参数 / 批量方案导入）</summary>
+    <div style="padding-top:8px;">
+      <div class="row">
+        <button id="btnImport" class="secondary">导入方案文件</button>
+        <input type="file" id="fileImport" accept=".json" style="display:none">
+      </div>
+      <div class="hint">
+        配合批量分析使用：先运行 service/tools/batch_process.py 离线分析整个文件夹
+        （每个视频生成 .newcut.json 方案文件），此处导入即可跳过分析直接应用。
+        详见 README「批量处理与方案文件」。
+      </div>
+
+      <h2>参数</h2>
+      <div class="param-grid">
+        <div class="cell"><label>静止阈值s</label><input type="text" id="pStill" value="0.1"></div>
+        <div class="cell"><label>运动阈值</label><input type="text" id="pMotion" value="2.0"></div>
+        <div class="cell"><label>边界阈值</label><input type="text" id="pBoundary" value="5.0"></div>
+        <div class="cell"><label>暂停阈值</label><input type="text" id="pThrPause" value="0.75"></div>
+        <div class="cell"><label>1x阈值</label><input type="text" id="pThrSpeed" value="0.75"></div>
+        <div class="cell"><label><input type="checkbox" id="optFast"> 快速模式</label></div>
+        <div class="cell"><label>解码后端</label><select id="decodeBackend" style="background:#1e1e1e;color:#eee;border:1px solid #555;">
+          <option value="auto" selected>自动（实测选型）</option>
+          <option value="cuda">GPU: CUDA (NVIDIA)</option>
+          <option value="qsv">GPU: QSV (Intel)</option>
+          <option value="d3d11va">GPU: DXVA (AMD/通用)</option>
+          <option value="sw">纯 CPU 软解</option>
+          <option value="opencv">OpenCV 兼容</option>
+        </select></div>
+      </div>
+    </div>
+  </details>
+
+  <script src="js/CSInterface.js"></script>
+  <script src="js/service-manager.js"></script>
+  <script src="js/bridge-cep.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

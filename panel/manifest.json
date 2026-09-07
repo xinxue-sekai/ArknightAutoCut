@@ -1,0 +1,33 @@
+{
+  "id": "com.newcut.arknights",
+  "name": "NewCut 明日方舟自动剪辑",
+  "shortname": "NewCut",
+  "version": "0.1.0",
+  "main": "index.html",
+  "manifestVersion": 5,
+  "host": {
+    "app": "premierepro",
+    "minVersion": "25.1.0"
+  },
+  "requiredPermissions": {
+    "localFileSystem": "request",
+    "clipboard": "readAndWrite",
+    "network": {
+      "domains": [
+        "http://127.0.0.1:8765",
+        "http://localhost:8765"
+      ]
+    }
+  },
+  "entrypoints": [
+    {
+      "id": "newcut.panel",
+      "type": "panel",
+      "minimumSize": { "width": 320, "height": 480 },
+      "maximumSize": { "width": 1200, "height": 1600 },
+      "preferredDockedSize": { "width": 360, "height": 640 },
+      "preferredFloatingSize": { "width": 400, "height": 720 },
+      "label": { "default": "NewCut 明日方舟自动剪辑" }
+    }
+  ]
+}
