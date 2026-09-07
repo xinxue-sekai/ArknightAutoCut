@@ -18,6 +18,7 @@ cep-plugin/com.newcut.arknights/engine/template_pack/
 .DS_Store
 Thumbs.db
 desktop.ini
+*.zip
 .vscode/
 .idea/
 .trae/
