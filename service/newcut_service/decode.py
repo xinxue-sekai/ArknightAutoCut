@@ -36,6 +36,11 @@ _selected = None  # {"hwaccel": str|None, "label": str} 全会话缓存（仅 au
 LAST_BENCH = {}   # 最近一次实测的各后端 fps（供面板展示）
 LAST_LABEL = ""
 
+# pythonw（无控制台）下拉起 ffmpeg 等控制台程序会弹窗，必须显式隐藏
+CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
+LOG_SINK = None  # 由 server._setup_logging 注入日志文件对象；ffmpeg 报错写到这里
+
 
 def _set_last(label, bench):
     global LAST_BENCH, LAST_LABEL
@@ -57,7 +62,8 @@ def find_ffmpeg():
 def available_hwaccels(ffmpeg):
     try:
         r = subprocess.run([ffmpeg, "-hide_banner", "-hwaccels"],
-                           capture_output=True, text=True, timeout=15)
+                           capture_output=True, text=True, timeout=15,
+                           creationflags=CREATE_NO_WINDOW)
         listed = [ln.strip() for ln in r.stdout.splitlines()[1:] if ln.strip()]
         return [h for h in CANDIDATE_HWACCELS if h in listed]
     except Exception:
@@ -74,7 +80,8 @@ def _bench_once(ffmpeg, video_path, tw, th, hwaccel, frames):
             "-f", "rawvideo", "pipe:1"]
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, bufsize=2 ** 24)
+                                stderr=subprocess.DEVNULL, bufsize=2 ** 24,
+                                creationflags=CREATE_NO_WINDOW)
     except Exception:
         return -1
     bpf = tw * th
@@ -170,23 +177,47 @@ def _ffmpeg_proc(ffmpeg, video_path, tw, th, hwaccel):
     cmd += ["-i", video_path,
             "-vf", f"scale={tw}:{th},format=gray",
             "-f", "rawvideo", "pipe:1"]
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            bufsize=2 ** 24)
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            bufsize=2 ** 24, creationflags=CREATE_NO_WINDOW)
 
 
 def iter_gray_ffmpeg(video_path: str, tw: int, th: int, hwaccel: str = None):
-    """生成器：逐帧产出 (th, tw) 灰度帧。ffmpeg 路径专用。"""
+    """生成器：逐帧产出 (th, tw) 灰度帧。ffmpeg 路径专用。
+
+    ffmpeg 异常退出（解码中断→分析提前结束）时，把 stderr 尾巴写进
+    日志文件——之前 DEVNULL 丢弃导致这类问题完全无法排查。
+    """
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("ffmpeg 不可用")
     proc = _ffmpeg_proc(ffmpeg, video_path, tw, th, hwaccel)
     bpf = tw * th
+    err_tail = []  # 保留最后 30 行 stderr，仅在异常退出时输出
+    if proc.stderr is not None:
+        def _drain():
+            try:
+                for line in proc.stderr:
+                    err_tail.append(line)
+                    if len(err_tail) > 30:
+                        err_tail.pop(0)
+            except Exception:
+                pass
+        threading.Thread(target=_drain, daemon=True).start()
     try:
         while True:
             buf = proc.stdout.read(bpf)
             if len(buf) < bpf:
                 break
             yield np.frombuffer(buf, dtype=np.uint8).reshape(th, tw)
+        rc = None
+        try:
+            rc = proc.wait(timeout=10)
+        except Exception:
+            pass
+        if rc not in (0, None) and LOG_SINK is not None:
+            print(f"[nc-engine] ffmpeg 解码提前中断 rc={rc} "
+                  f"(hwaccel={hwaccel}): {''.join(err_tail)[-2000:]}",
+                  flush=True)
     finally:
         try:
             proc.kill()

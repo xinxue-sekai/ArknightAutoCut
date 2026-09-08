@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import cv2
 
 SERVICE_NAME = "newcut-service"
-SERVICE_VERSION = "0.3.2"
+SERVICE_VERSION = "0.3.3"
 
 # 引擎内部按相对路径读取模板目录，必须先切到模板所在目录
 os.chdir(_HERE)
@@ -53,22 +53,54 @@ def _watchdog():
 
 
 def _setup_logging():
-    """把 stdout/stderr 落盘到插件根目录 newcut-service.log。
+    """stdout/stderr 双写：落盘插件根目录 newcut-service.log + 保留原流。
 
-    pythonw + stdio:ignore 启动时没有控制台，日志（含分析报错堆栈）
-    原本会全部丢失；重定向后可在日志文件里排查面板里看不到的堆栈。
+    pythonw + stdio:ignore 下原流是 NUL 设备（不是 None），之前只在
+    None 时重定向导致日志文件 0 字节。Tee 保证日志总有完整内容（含
+    分析报错堆栈），同时不影响冒烟测试通过管道读取 "listening"。
     """
     path = os.path.join(os.path.dirname(_HERE), "newcut-service.log")
     try:
         f = open(path, "a", buffering=1, encoding="utf-8", errors="replace")
-        if sys.stdout is None:
-            sys.stdout = f
-        if sys.stderr is None:
-            sys.stderr = f
-        print(f"\n[{SERVICE_NAME}] --- 启动 {time.strftime('%Y-%m-%d %H:%M:%S')} "
-              f"v{SERVICE_VERSION} ---", flush=True)
     except OSError:
-        pass
+        return
+
+    class _Tee:
+        def __init__(self, orig):
+            self.orig = orig
+
+        def write(self, s):
+            f.write(s)
+            if self.orig is not None:
+                try:
+                    self.orig.write(s)
+                except Exception:
+                    pass
+            return len(s)
+
+        def flush(self):
+            try:
+                f.flush()
+            except Exception:
+                pass
+            if self.orig is not None:
+                try:
+                    self.orig.flush()
+                except Exception:
+                    pass
+
+        def fileno(self):
+            return f.fileno()
+
+        def isatty(self):
+            return False
+
+    sys.stdout = _Tee(sys.stdout)
+    sys.stderr = _Tee(sys.stderr)
+    print(f"\n[{SERVICE_NAME}] --- 启动 {time.strftime('%Y-%m-%d %H:%M:%S')} "
+          f"v{SERVICE_VERSION} ---", flush=True)
+    import decode
+    decode.LOG_SINK = f  # 解码层 ffmpeg 异常退出的 stderr 也写进同一份日志
 
 
 def _new_job(video_path: str, params: dict) -> str:
