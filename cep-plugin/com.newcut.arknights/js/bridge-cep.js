@@ -63,15 +63,27 @@ var CEPBridge = (function () {
     }
 
     // 跳转 PR 播放头到源素材的某秒。
-    // 若当前活动序列是 _newcut（重建后），把源时间映射到重建时间轴。
-    function seekPR(sourceSec, plan, clip, cb) {
-        var target = sourceSec;
-        if (plan && plan.keep_ranges) {
-            target = mapSourceToRebuilt(sourceSec, plan);
-        }
+    // applied: null（未应用，活动序列=源序列，直接走源时间+剪辑起点偏移）
+    // 或 {mode:"newseq"|"inplace", seqName}（已应用，把源时间映射到精剪
+    // 时间轴；新序列从 0 起摆，原序列保留剪辑原起点偏移）。
+    // 应用过但活动序列已不是当时那个（用户手动切换/撤销）时按未应用处理。
+    function seekPR(sourceSec, plan, clip, applied, cb) {
         var offset = (clip && clip.startSec) || 0;
-        var script = 'ncSeekPlayhead(' + (target + offset).toFixed(3) + ')';
-        evalJson(script, cb);
+        function jump(target) {
+            evalJson('ncSeekPlayhead(' + target.toFixed(3) + ')', cb);
+        }
+        if (applied && plan && plan.keep_ranges) {
+            getActiveClipInfo(function (info) {
+                if (!info.error && info.sequenceName === applied.seqName) {
+                    jump(mapSourceToRebuilt(sourceSec, plan) +
+                         (applied.mode === "inplace" ? offset : 0));
+                } else {
+                    jump(sourceSec + offset);
+                }
+            });
+            return;
+        }
+        jump(sourceSec + offset);
     }
 
     function mapSourceToRebuilt(sourceSec, plan) {

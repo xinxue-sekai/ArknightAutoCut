@@ -297,9 +297,10 @@ function renderPauseList(plan) {
     img.dataset.sec = p.start / fps;
     img.title = "点击跳转 PR 播放头";
     img.addEventListener("click", function () {
-      CEPBridge.seekPR(p.start / fps, state.plan, state.clip, function (r) {
-        if (r && r.error) log("跳转失败: " + r.error, true);
-      });
+      CEPBridge.seekPR(p.start / fps, state.plan, state.clip, state.applied,
+        function (r) {
+          if (r && r.error) log("跳转失败: " + r.error, true);
+        });
     });
 
     var t = document.createElement("span");
