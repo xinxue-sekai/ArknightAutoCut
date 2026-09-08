@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import cv2
 
 SERVICE_NAME = "newcut-service"
-SERVICE_VERSION = "0.4.0"
+SERVICE_VERSION = "0.4.1"
 
 # 引擎内部按相对路径读取模板目录，必须先切到模板所在目录
 os.chdir(_HERE)

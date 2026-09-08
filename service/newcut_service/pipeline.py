@@ -261,6 +261,7 @@ def _build_plan(video_path, info, pack, states, diffs, means, combat, p,
                 seg["mode"] = "all"
 
     # ---- 删除掩码（含人工排除） ----
+    warnings = []
     excluded = set(p.get("excluded_pauses") or [])
     to_del = np.zeros(total, dtype=bool)
     for seg in pauses:
@@ -272,7 +273,8 @@ def _build_plan(video_path, info, pack, states, diffs, means, combat, p,
         else:
             to_del[s:e + 1] |= seg["local_del"].astype(bool)
 
-    # ---- 转场删除：黑屏 / 冻结（快速模式下 diffs 稀疏，只做黑屏） ----
+    # ---- 转场删除：仅黑屏（参考项目不删除 NORMAL 冻结帧——安静等待是
+    #      正常玩法，帧差低不代表该删；此前误删大量正常画面，已移除） ----
     transitions = []
     if p.get("detect_transitions", True):
         report("transitions", 0.95, "转场检测")
@@ -282,23 +284,44 @@ def _build_plan(video_path, info, pack, states, diffs, means, combat, p,
             if e - s + 1 >= min_black:
                 to_del[s:e + 1] = True
                 transitions.append({"type": "black", "start": s, "end": e})
-        if not fast_mode:
-            frozen = (states == 0) & (diffs < 0.6)
-            min_frozen = max(2, int(fps * 1.2))
-            for s, e in _runs_true(frozen):
-                if e - s + 1 >= min_frozen:
-                    to_del[s:e + 1] = True
-                    transitions.append({"type": "frozen", "start": s, "end": e})
 
     # ---- 非作战画面删除：combat 标签（"剩余可放置角色"）缺失的游程 ----
+    # 双保险（此前 combat 模板在布局不同的录屏里全部落空，整段视频被误判
+    # 非作战而几乎全删，26 分钟只剩 2 秒）：
+    #   1. 全片 combat 周占比 >= min_combat_ratio 才启用（作战画面应占多数）
+    #   2. 删除量超过总量 60% 自动熔断，保留原样并报警
     noncombat = []
     if pack.has_combat and combat is not None and p.get("remove_noncombat", True):
         report("noncombat", 0.97, "非作战画面检测")
-        min_noncombat = max(2, int(fps * 0.3))
-        for s, e in _runs_true(~combat.astype(bool)):
-            if e - s + 1 >= min_noncombat:
-                to_del[s:e + 1] = True
-                noncombat.append({"start": s, "end": e})
+        combat_ratio = float(np.mean(combat.astype(bool)))
+        if combat_ratio < 0.05:
+            warnings.append(
+                f"combat 标签命中率仅 {combat_ratio * 100:.1f}%（<5%），非作战画面删除"
+                f"已自动停用；模板包与本次录屏布局可能不匹配，请用 --combat 重新校准")
+            print(f"[nc-engine] 警告: {warnings[-1]}", flush=True)
+        else:
+            cand = []
+            for s, e in _runs_true(~combat.astype(bool)):
+                if e - s + 1 >= max(2, int(fps * 0.3)):
+                    cand.append((s, e))
+            would_del = sum(e - s + 1 for s, e in cand)
+            if total > 0 and would_del > total * 0.6:
+                warnings.append(
+                    f"非作战删除将移除 {would_del * 100 // max(1, total)}% 的画面，"
+                    f"超过 60% 安全线，已自动熔断停用")
+                print(f"[nc-engine] 警告: {warnings[-1]}", flush=True)
+            else:
+                for s, e in cand:
+                    to_del[s:e + 1] = True
+                    noncombat.append({"start": s, "end": e})
+
+    # ---- 全局 sanity：暂停帧占比过高 / 保留过少 -> 警告 ----
+    paused_frac = float(np.mean(states == STATE_PAUSED)) if total else 0.0
+    if paused_frac > 0.8:
+        warnings.append(
+            f"暂停帧占比 {paused_frac * 100:.0f}% 异常偏高，模板匹配可能失效"
+            f"（布局/分辨率不匹配？），结果可信度低")
+        print(f"[nc-engine] 警告: {warnings[-1]}", flush=True)
 
     keep_ranges = [[int(a), int(b) + 1] for a, b in _runs_true(~to_del)]
 
@@ -333,6 +356,11 @@ def _build_plan(video_path, info, pack, states, diffs, means, combat, p,
         })
 
     kept = sum(e - s for s, e in keep_ranges)
+    if total > 0 and kept < total * 0.05 and total / fps > 60:
+        warnings.append(
+            f"保留时长仅 {kept / fps:.1f}s（原片 {total / fps:.0f}s，<5%），"
+            f"删除规则可能误判，请核对面板勾选或附日志反馈")
+        print(f"[nc-engine] 警告: {warnings[-1]}", flush=True)
     report("done", 1.0, "完成")
     return {
         "engine": "newcut-nc/1.1",
@@ -344,6 +372,8 @@ def _build_plan(video_path, info, pack, states, diffs, means, combat, p,
         "pauses": pause_events,
         "speeds": [sp for sp in speeds if p["speedup_1x"]],
         "transitions": transitions,
+        "noncombat_ranges": noncombat,
+        "warnings": warnings,
         "keep_ranges": keep_ranges,
         "delete_ranges": delete_ranges,
         "total_kept_frames": kept,
