@@ -69,8 +69,30 @@ class Cancelled(Exception):
     pass
 
 
+def _sample_frames(video_path: str, info: dict, pack, k: int = 10) -> list:
+    """取 k 个均匀分布的采样帧（proc_size 灰度），供几何自适应。"""
+    total = max(1, info["frame_count"])
+    idxs = sorted({int(total * f) for f in
+                   (0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.98)})[:k + 2]
+    out = []
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return out
+    try:
+        for i in idxs:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+            ok, f = cap.read()
+            if ok:
+                out.append(nc_match.preprocess(f, pack.proc_size))
+            if len(out) >= k:
+                break
+    finally:
+        cap.release()
+    return out
+
+
 def _classify_all(video_path, pack, p, info, n_threads, progress_cb, cancel_cb):
-    """解码 + 逐帧分类。返回 (states, diffs, means, backend_name)。"""
+    """解码 + 逐帧分类。返回 (states, diffs, means, combat, backend_name)。"""
     fps = info["fps"]
     total_est = max(1, info["frame_count"])
     backend = p.get("decode_backend", "auto")
@@ -84,13 +106,15 @@ def _classify_all(video_path, pack, p, info, n_threads, progress_cb, cancel_cb):
         if pre_sized:
             def work(g):
                 g2 = decode.fit_to_pack(g, pack.proc_size)
-                return nc_match.classify(g2, pack), float(np.mean(g2)), g2
+                (st, cb), mean, g2 = nc_match.classify_full(g2, pack), float(np.mean(g2)), g2
+                return st, cb, mean, g2
         else:
             def work(f):
                 g = nc_match.preprocess(f, pack.proc_size)
-                return nc_match.classify(g, pack), float(np.mean(g)), g
+                (st, cb), mean, g = nc_match.classify_full(g, pack), float(np.mean(g)), g
+                return st, cb, mean, g
 
-        states_l, means_l, diffs_l = [], [], []
+        states_l, means_l, diffs_l, combat_l = [], [], [], []
         prev_gray = [None]
         count = [0]
         t0 = time.time()
@@ -104,17 +128,19 @@ def _classify_all(video_path, pack, p, info, n_threads, progress_cb, cancel_cb):
             for i, f in enumerate(batch):
                 count[0] += 1
                 if i in results:
-                    st, mean, g = results[i]
+                    st, cb, mean, g = results[i]
                     d = 0.0
                     if prev_gray[0] is not None and prev_gray[0].shape == g.shape:
                         d = float(cv2.mean(cv2.absdiff(prev_gray[0], g))[0])
                     prev_gray[0] = g
                     states_l.append(st); means_l.append(mean); diffs_l.append(d)
+                    combat_l.append(cb)
                 else:
                     # 快速模式跳过的帧：继承前一个采样帧的状态（前值填充）
                     states_l.append(states_l[-1] if states_l else 0)
                     means_l.append(means_l[-1] if means_l else 0.0)
                     diffs_l.append(0.0)
+                    combat_l.append(combat_l[-1] if combat_l else False)
             report(count[0] / total_est, f"解码与帧分类 ({label})")
 
         with ThreadPoolExecutor(max_workers=max(1, n_threads)) as pool:
@@ -133,7 +159,8 @@ def _classify_all(video_path, pack, p, info, n_threads, progress_cb, cancel_cb):
               f"{count[0] / max(time.time() - t0, 0.001):.0f} fps", flush=True)
         return (np.array(states_l, dtype=np.int8),
                 np.array(diffs_l, dtype=np.float32),
-                np.array(means_l, dtype=np.float32))
+                np.array(means_l, dtype=np.float32),
+                np.array(combat_l, dtype=bool))
 
     # ---- 路径选择：ffmpeg(实测选型 NVDEC/QSV/DXVA/软解) -> OpenCV ----
     if backend in ("auto", "ffmpeg", "sw", "cuda", "qsv", "d3d11va", "dxva2",
@@ -144,12 +171,12 @@ def _classify_all(video_path, pack, p, info, n_threads, progress_cb, cancel_cb):
                                                          requested)
             if frames is None:
                 raise RuntimeError("ffmpeg 不可用")
-            st, df, mn = classify_all_from(frames, True, backend_name)
+            st, df, mn, cb = classify_all_from(frames, True, backend_name)
             warn = None
             if backend not in ("auto", "ffmpeg", "sw") and backend_name != f"ffmpeg-{backend}":
                 warn = (f"GPU 加速未生效：请求 {backend}，实际使用 {backend_name}"
                         f"（探测未达标或硬件不可用），已自动回退软解")
-            return st, df, mn, backend_name, warn
+            return st, df, mn, cb, backend_name, warn
         except Cancelled:
             raise
         except Exception as e:
@@ -169,10 +196,10 @@ def _classify_all(video_path, pack, p, info, n_threads, progress_cb, cancel_cb):
             yield f
 
     try:
-        st, df, mn = classify_all_from(bgr_iter(), False, "opencv")
+        st, df, mn, cb = classify_all_from(bgr_iter(), False, "opencv")
     finally:
         cap.release()
-    return st, df, mn, "opencv", None
+    return st, df, mn, cb, "opencv", None
 
 
 def _runs_true(mask) -> list:
@@ -197,8 +224,8 @@ def _complement(keep, total):
     return out
 
 
-def _build_plan(video_path, info, pack, states, diffs, means, p, progress_cb,
-                fast_mode):
+def _build_plan(video_path, info, pack, states, diffs, means, combat, p,
+                progress_cb, fast_mode):
     fps, total = info["fps"], len(states)
 
     def report(phase, frac, detail=""):
@@ -262,6 +289,16 @@ def _build_plan(video_path, info, pack, states, diffs, means, p, progress_cb,
                 if e - s + 1 >= min_frozen:
                     to_del[s:e + 1] = True
                     transitions.append({"type": "frozen", "start": s, "end": e})
+
+    # ---- 非作战画面删除：combat 标签（"剩余可放置角色"）缺失的游程 ----
+    noncombat = []
+    if pack.has_combat and combat is not None and p.get("remove_noncombat", True):
+        report("noncombat", 0.97, "非作战画面检测")
+        min_noncombat = max(2, int(fps * 0.3))
+        for s, e in _runs_true(~combat.astype(bool)):
+            if e - s + 1 >= min_noncombat:
+                to_del[s:e + 1] = True
+                noncombat.append({"start": s, "end": e})
 
     keep_ranges = [[int(a), int(b) + 1] for a, b in _runs_true(~to_del)]
 
@@ -339,22 +376,36 @@ def run_analysis_full(video_path: str, params: dict, progress_cb=None,
 
     n_threads = int(params.get("n_threads") or 0) or (os.cpu_count() or 4)
     fast_mode = bool(p.get("fast_mode"))
+
+    # ---- 几何自适应：采样帧锁定 UI 缩放比与控制条位置 ----
+    report("load", 0.0, "几何自适应")
+    geometry = None
+    try:
+        samples = _sample_frames(video_path, info, pack)
+        if len(samples) >= 3:
+            geometry = nc_match.calibrate_geometry(samples, pack)
+    except Exception as e:
+        print(f"[nc-engine] 几何自适应失败（按原始模板继续）: {e}", flush=True)
+
     report("decode", 0.0, "解码与帧分类")
-    states, diffs, means, backend, backend_warn = _classify_all(
+    states, diffs, means, combat, backend, backend_warn = _classify_all(
         video_path, pack, p, info, n_threads, progress_cb, cancel_cb)
     total = len(states)
     if len(diffs) != total:
         diffs = np.zeros(total, dtype=np.float32)
+    if combat is None or len(combat) != total:
+        combat = np.zeros(total, dtype=bool)
 
-    result = _build_plan(video_path, info, pack, states, diffs, means, p,
+    result = _build_plan(video_path, info, pack, states, diffs, means, combat, p,
                          progress_cb, fast_mode)
     result["backend"] = backend
     result["backend_warning"] = backend_warn
+    result["geometry"] = geometry
     result["decode_bench"] = {} if backend == "opencv" else dict(decode.LAST_BENCH)
     result["fast_mode"] = fast_mode
     context = {
         "video_path": video_path, "info": info, "proc_size": list(pack.proc_size),
-        "states": states, "diffs": diffs, "means": means,
+        "states": states, "diffs": diffs, "means": means, "combat": combat,
         "params": p, "fast_mode": fast_mode,
     }
     return result, context
@@ -364,13 +415,15 @@ def rebuild_plan(context: dict, overrides: dict) -> dict:
     """基于缓存上下文重算方案（不重新解码）。"""
     p = dict(context["params"])
     for k in ("excluded_pauses", "merge_gap_sec", "detect_transitions",
-              "still_time_thresh", "motion_thresh", "boundary_thresh"):
+              "remove_noncombat", "still_time_thresh", "motion_thresh",
+              "boundary_thresh"):
         if k in (overrides or {}):
             p[k] = overrides[k]
     pack = _load_pack(p)
+    combat = context.get("combat")
     return _build_plan(context["video_path"], context["info"], pack,
                        context["states"], context["diffs"], context["means"],
-                       p, None, context.get("fast_mode", False))
+                       combat, p, None, context.get("fast_mode", False))
 
 
 def run_analysis(video_path: str, params: dict, progress_cb=None) -> dict:

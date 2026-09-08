@@ -57,14 +57,19 @@ uv run python service/tools/build_portable.py --calibrate-video 一局录像.mp4
 
 ```bash
 uv run python service/tools/pack_from_video.py --video 一局录像.mp4 \
-    --paused 120 --running 80 --speed2x 80 --verify \
-    --boxes "speed=x0,y0,x1,y1;playpause=x0,y0,x1,y1" \
+    --paused 120 --running 80 --speed2x 80 --combat 80 --verify \
+    --boxes "speed=x0,y0,x1,y1;playpause=x0,y0,x1,y1;combat=x0,y0,x1,y1" \
     --out cep-plugin/com.newcut.arknights/engine/template_pack
 ```
 
 - 三个时间点：一局里任意「暂停中」「运行中」「2x 运行中」的时刻（秒）
-- `--boxes`：两个按钮的像素框（支持 0~1 归一化）；测量方法见脚本头部注释
+- `--combat`：任意一个作战画面的时刻（秒），用于提取"剩余可放置角色"标签模板；
+  提供后引擎会自动整段删除片头菜单/加载/编队与片尾结算等非作战画面
+- `--boxes`：按钮的像素框（支持 0~1 归一化）；combat 框可省略（默认按常见位置
+  推测），误差大时请显式测量；测量方法见脚本头部注释
 - `--verify` 会在已知状态帧上自检并打印结果
+- v0.4.0 起引擎自带几何自适应：分析开头自动探测本次录屏中游戏 UI 的缩放比与
+  控制条位置，桌面内嵌模拟器窗口等布局也能正确匹配
 - 生成后把 `template_pack/` 放进插件 `engine/` 目录（构建时用 `--out` 指到那里即可）
 
 ## 使用流程

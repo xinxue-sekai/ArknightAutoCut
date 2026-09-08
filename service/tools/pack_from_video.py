@@ -136,7 +136,7 @@ def main():
     if args.verify:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                         "..", "newcut_service"))
-        from nc_match import TemplatePack, preprocess, classify
+        from nc_match import TemplatePack, preprocess, classify_full
         pack = TemplatePack(args.out)
         print("[verify] 已知状态帧分类自检:")
         name_map = {0: "NORMAL", 1: "PAUSED", 2: "SPEED_1X", 3: "SPEED_2X"}
@@ -144,9 +144,14 @@ def main():
                             (args.running, "SPEED_1X" if args.speed1x == args.running
                              else ("SPEED_2X" if args.speed2x == args.running else "NORMAL"))]:
             f = grab_frame(args.video, sec)
-            st = classify(preprocess(f, pack.proc_size), pack)
+            st, cb = classify_full(preprocess(f, pack.proc_size), pack)
             mark = "✔" if name_map[st] == expect else f"(期望 {expect})"
-            print(f"  t={sec}s -> {name_map[st]} {mark if mark != '✔' else '✔'}")
+            combat_mark = f" combat={cb}" if pack.has_combat else ""
+            print(f"  t={sec}s -> {name_map[st]} {mark if mark != '✔' else '✔'}{combat_mark}")
+        if args.combat is not None and pack.has_combat:
+            f = grab_frame(args.video, args.combat)
+            _, cb = classify_full(preprocess(f, pack.proc_size), pack)
+            print(f"  t={args.combat}s -> combat={cb} {'✔' if cb else '(期望 True)'}")
 
 
 if __name__ == "__main__":

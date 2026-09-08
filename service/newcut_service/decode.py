@@ -19,6 +19,7 @@
 import os
 import shutil
 import subprocess
+import sys
 import threading
 
 import cv2
@@ -47,16 +48,33 @@ def _set_last(label, bench):
     LAST_BENCH, LAST_LABEL = bench, label
 
 
-def find_ffmpeg():
-    exe = os.environ.get("NEWCUT_FFMPEG")
-    if exe and os.path.isfile(exe):
-        return exe
+_FFMPEG_CACHE = {"exe": None, "done": False}
+
+
+def _probe_imageio_ffmpeg():
+    """imageio_ffmpeg.get_ffmpeg_exe() 内部走 platform.uname()->WMI，
+    Windows 上可能无限挂死；放到带超时的子进程里探测，挂死则放弃。"""
+    code = "import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())"
     try:
-        import imageio_ffmpeg
-        return imageio_ffmpeg.get_ffmpeg_exe()
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                           text=True, timeout=20, creationflags=CREATE_NO_WINDOW)
+        exe = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else None
+        if exe and os.path.isfile(exe):
+            return exe
     except Exception:
         pass
-    return shutil.which("ffmpeg")
+    return None
+
+
+def find_ffmpeg():
+    """查找顺序：NEWCUT_FFMPEG -> PATH -> imageio_ffmpeg（子进程探测防 WMI 挂死）。"""
+    if _FFMPEG_CACHE["done"]:
+        return _FFMPEG_CACHE["exe"]
+    exe = os.environ.get("NEWCUT_FFMPEG")
+    if not (exe and os.path.isfile(exe)):
+        exe = shutil.which("ffmpeg") or _probe_imageio_ffmpeg()
+    _FFMPEG_CACHE.update(exe=exe, done=True)
+    return exe
 
 
 def available_hwaccels(ffmpeg):
